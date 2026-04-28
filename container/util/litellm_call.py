@@ -1,6 +1,12 @@
+import os
+
 import litellm
 from litellm.types.utils import Message
 from pydantic import BaseModel
+
+_API_BASE = os.environ["LLM_API_BASE"]
+_API_KEY = os.environ["LLM_API_KEY"]
+_MODEL_NAME = os.environ["LLM_MODEL_NAME"]
 
 
 async def llm_call(
@@ -23,13 +29,13 @@ async def llm_call(
     if isinstance(messages, str):
         messages = [{"role": "user", "content": messages}]
     response = await litellm.acompletion(
-        model="aseno-gemini-model",
+        model=_MODEL_NAME,
         messages=messages,
         tools=tools,
         stream=False,
         response_format=response_format,
-        api_base="https://ai.cloud-doctor.eu",  # your proxy URL
-        api_key="sk-Q4ZYBtVJSSOtDMVgPO47gA",  
+        api_base=_API_BASE,
+        api_key=_API_KEY,
     )
 
     # Handle the response properly - litellm returns a ModelResponse object

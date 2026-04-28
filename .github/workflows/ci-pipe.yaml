@@ -30,4 +30,5 @@ jobs:
           push: true
           tags: |
             aseno/restate-agent-one:latest
+            aseno/restate-agent-one:1.0.1
             aseno/restate-agent-one:${{ github.sha }}
