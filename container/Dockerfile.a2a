@@ -3,10 +3,14 @@ FROM ghcr.io/astral-sh/uv:python3.12-bookworm-slim
 WORKDIR /app
 
 COPY agent-a2a/pyproject.toml agent-a2a/uv.lock ./
-RUN uv sync --frozen --no-dev
+RUN uv sync --frozen --no-dev --no-install-project
 
 COPY agent-a2a/ .
 
+RUN uv sync --frozen --no-dev
+
+ENV PATH="/app/.venv/bin:$PATH"
+
 EXPOSE 9080
 
-ENTRYPOINT ["uv", "run", "python", "app/reimbursement/__main__.py"]
+ENTRYPOINT ["python", "app/reimbursement/__main__.py"]
