@@ -9,4 +9,5 @@ COPY agent-a2a/ .
 
 EXPOSE 9080
 
-CMD ["uv", "run", "python", "app/reimbursement/__main__.py"]
+#CMD ["uv", "run", "python", "app/reimbursement/__main__.py"]
+ENTRYPOINT [ "python", "app/reimbursement/__main__.py" ]

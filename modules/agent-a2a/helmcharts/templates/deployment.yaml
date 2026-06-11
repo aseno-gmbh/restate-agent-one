@@ -1,0 +1,70 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: restate-agent-a2a
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app: restate-agent-a2a
+spec:
+  selector:
+    matchLabels:
+      app: restate-agent-a2a
+      tier: restate-agent-a2a
+  replicas: 1
+  template:
+    metadata:
+      labels:
+        app: restate-agent-a2a
+        tier: restate-agent-a2a
+    spec:
+      containers:
+      - name: restate-agent-a2a
+        image: {{ .Values.global.imageRegistry }}/{{ .Values.deployment.image }}
+        imagePullPolicy: Always 
+        resources:
+          limits:
+            cpu: {{ .Values.deployment.resources.cpuLimit }}
+            memory: {{ .Values.deployment.resources.memoryLimit }}
+          requests:
+            cpu: {{ .Values.deployment.resources.cpuRequest }}
+            memory: {{ .Values.deployment.resources.memoryRequest }}
+        ports:
+        - containerPort: {{ .Values.deployment.containerPort }}
+        env:
+        - name: PUBLIC_URL
+          value: {{ .Values.ui.publicURL }}
+        - name: LLM_API_BASE
+          value: {{ .Values.llm.apiBase }}
+        - name: LLM_API_KEY
+          value: {{ .Values.llm.apiKey }}
+        - name: LLM_MODEL_NAME
+          value: {{ .Values.llm.modelName }}
+        - name: RESTATE_HOST
+          value: {{ .Values.restate.host }}
+        - name: AGENT_PORT
+          value: {{ .Values.service.port | quote }}
+        - name: AGENT_CONTAINER_PORT
+          value: {{ .Values.deployment.containerPort | quote }}        
+        - name: AZURE_INFERENCE_ENDPOINT
+          value: {{ .Values.ui.azureInferenceEndpoint }}
+        - name: AZURE_INFERENCE_CREDENTIAL
+          value: {{ .Values.ui.azureInferenceCredential }}
+        - name: AWS_ACCESS_KEY_ID
+          value: {{ .Values.ui.awsAccessKeyId }}
+        - name: AWS_SECRET_ACCESS_KEY
+          value: {{ .Values.ui.awsSecretAccessKey }}
+        - name: AWS_MODEL_ID
+          value: {{ .Values.agent.model_id }}
+        - name: AWS_REGION
+          value: {{ .Values.agent.region }}
+        - name: MCP_SERVER_URL
+          value: {{ .Values.mcp.url }}
+        - name: MCP_SERVER_TRANSPORT
+          value: {{ .Values.mcp.transport }}
+        - name: LANGSMITH_ENDPOINT
+          value: {{ .Values.ui.langsmithEndpoint }}
+        - name: LANGSMITH_API_KEY
+          value: {{ .Values.ui.langsmithApiKey }}
+        - name: LANGSMITH_PROJECT
+          value: {{ .Values.ui.langsmithProject }}
+  
