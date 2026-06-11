@@ -26,14 +26,6 @@ if __name__ == '__main__':
     import hypercorn.asyncio
 
     try:
-        # Check for required API keys
-        if not os.getenv('OPENAI_API_KEY') and not os.getenv('GEMINI_API_KEY'):
-            if not os.getenv('GOOGLE_GENAI_USE_VERTEXAI') == 'TRUE':
-                raise Exception(
-                    'Either OPENAI_API_KEY or GEMINI_API_KEY must be set, '
-                    'or GOOGLE_GENAI_USE_VERTEXAI must be TRUE.'
-                )
-
         # Define the agent card for A2A protocol
         agent_card = AgentCard(
             name="ReimbursementAgent",
@@ -96,8 +88,8 @@ if __name__ == '__main__':
         app.mount("/restate/v1", restate.app([*middleware, reimbursement_service, payment_service]))
 
         conf = hypercorn.Config()
-        host = "localhost"
-        port = os.getenv("AGENT_PORT", "9081")
+        host = "0.0.0.0"
+        port = os.getenv("AGENT_PORT", "9080")
         conf.bind = [f"{host}:{port}"]
         logger.info(f"Server running at http://{host}:{port}")
         logger.info("Available endpoints:")
