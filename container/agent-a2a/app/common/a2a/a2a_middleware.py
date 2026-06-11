@@ -116,7 +116,7 @@ class RestateA2AMiddleware(Iterable[restate.Service | restate.VirtualObject]):
                 ctx: restate.ObjectContext, request: CancelTaskRequest
             ) -> CancelTaskResponse:
                 cancelled_task = await TaskObject.update_store(
-                    ctx, state=TaskState.CANCELED
+                    ctx, state=TaskState.canceled
                 )
                 success_response = CancelTaskSuccessResponse(
                     id=request.id, result=cancelled_task
@@ -155,13 +155,13 @@ class RestateA2AMiddleware(Iterable[restate.Service | restate.VirtualObject]):
                     if result.require_user_input:
                         updated_task = await TaskObject.update_store(
                             ctx,
-                            state=TaskState.INPUT_REQUIRED,
+                            state=TaskState.input_required,
                             status_message=Message(message_id=str(ctx.uuid()), role=Role.agent, parts=result.parts),
                         )
                     else:
                         updated_task = await TaskObject.update_store(
                             ctx,
-                            state=TaskState.COMPLETED,
+                            state=TaskState.completed,
                             artifacts=[Artifact(artifact_id=str(ctx.uuid()), parts=result.parts)],
                         )
 
@@ -171,7 +171,7 @@ class RestateA2AMiddleware(Iterable[restate.Service | restate.VirtualObject]):
                     if e.status_code == 409 and e.message == "cancelled":
                         logger.info("Task %s was cancelled", message_send_params.message.task_id)
                         cancelled_task = await TaskObject.update_store(
-                            ctx, state=TaskState.CANCELED
+                            ctx, state=TaskState.canceled
                         )
                         ctx.clear(INVOCATION_ID)
                         return SendMessageResponse(root=SendMessageSuccessResponse(id=request.id, result=cancelled_task))
@@ -182,7 +182,7 @@ class RestateA2AMiddleware(Iterable[restate.Service | restate.VirtualObject]):
                         e.status_code,
                         e.message,
                     )
-                    failed_task = await TaskObject.update_store(ctx, state=TaskState.FAILED)
+                    failed_task = await TaskObject.update_store(ctx, state=TaskState.failed)
                     ctx.clear(INVOCATION_ID)
                     return SendMessageResponse(root=JSONRPCErrorResponse(id=request.id, error=JSONRPCError(code=e.status_code,message=e.message)))
 
@@ -251,7 +251,7 @@ class RestateA2AMiddleware(Iterable[restate.Service | restate.VirtualObject]):
                             id=message_send_params.message.message_id,
                             context_id=message_send_params.message.context_id,
                             status=TaskStatus(
-                                state=TaskState.SUBMITTED,
+                                state=TaskState.submitted,
                                 timestamp=datetime.now().isoformat()
                             ),
                             history=[message_send_params.message] if message_send_params.message else [],
