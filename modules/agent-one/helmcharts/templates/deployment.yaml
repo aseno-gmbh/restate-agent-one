@@ -34,11 +34,11 @@ spec:
         - name: PUBLIC_URL
           value: {{ .Values.ui.publicURL }}
         - name: LLM_API_BASE
-          value: {{ .Values.llm.LLM_API_BASE }}
+          value: {{ .Values.llm.apiBase }}
         - name: LLM_API_KEY
-          value: {{ .Values.llm.LLM_API_KEY }}
+          value: {{ .Values.llm.apiKey }}
         - name: LLM_MODEL_NAME
-          value: {{ .Values.llm.LLM_MODEL_NAME }}
+          value: {{ .Values.llm.modelName }}
         - name: AZURE_INFERENCE_ENDPOINT
           value: {{ .Values.ui.azureInferenceEndpoint }}
         - name: AZURE_INFERENCE_CREDENTIAL

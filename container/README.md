@@ -48,7 +48,7 @@ restate-server
 **Register the services:**
 
 ```bash
-restate -y deployments register localhost:9080 --force
+restate -y deployments register restate-agent-one:9080  --force
 ```
 
 ## Sending messages
@@ -78,3 +78,5 @@ curl localhost:8080/CodingAgent/bob/get_history
 ```
 
 Open the Restate UI at `http://localhost:9070` to inspect the invocations — the first `CodingTask.run_task` shows status `cancelled`, and the second `completed`.
+
+

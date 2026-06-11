@@ -26,9 +26,9 @@ jobs:
         uses: docker/build-push-action@v6
         with:
           context: ./container
-          file: ./container/Dockerfile
+          file: ./container/Dockerfile.a2a
           push: true
           tags: |
-            aseno/restate-agent-one:latest
-            aseno/restate-agent-one:1.0.1
-            aseno/restate-agent-one:${{ github.sha }}
+            aseno/restate-agent-a2a:latest
+            aseno/restate-agent-a2a:1.0.1
+            aseno/restate-agent-a2a:${{ github.sha }}
