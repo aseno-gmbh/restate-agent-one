@@ -2,10 +2,10 @@ FROM ghcr.io/astral-sh/uv:python3.12-bookworm-slim
 
 WORKDIR /app
 
-COPY pyproject.toml uv.lock ./
+COPY agent-one/pyproject.toml agent-one/uv.lock ./
 RUN uv sync --frozen --no-dev
 
-COPY . .
+COPY agent-one/ .
 
 EXPOSE 9080
 

@@ -1,9 +1,3 @@
-# import openai
-
-# client = openai.OpenAI(
-# 	api_key="sk-nyR3TMq7uzO-gCwHyQR0sw",
-# 	base_url="https://ai.cloud-doctor.eu"
-# )
 
 import litellm
 
