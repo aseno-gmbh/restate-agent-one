@@ -1,10 +1,7 @@
 import logging
 import restate
 import json
-logging.basicConfig(
-    level=logging.INFO,
-    format="[%(asctime)s] [%(process)d] [%(levelname)s] - %(message)s",
-)
+
 logger = logging.getLogger(__name__)
 
 from typing import Any, Optional
@@ -66,9 +63,10 @@ async def reimburse(
 ) -> dict[str, str]:
     """Reimbursement workflow."""
     restate_context = tool_context.session.state["restate_context"]
+    logger.info("reimburse called — request_id=%s amount=%s date=%s purpose=%s", request_id, amount, date, purpose)
 
     # 1. Wait for approval
-    if amount > 100.0:
+    if amount > 1000.0:
         # Human approval
         callback_id, callback_promise = restate_context.awakeable()
         logger.info(

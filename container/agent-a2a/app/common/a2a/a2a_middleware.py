@@ -144,6 +144,8 @@ class RestateA2AMiddleware(Iterable[restate.Service | restate.VirtualObject]):
             async def get_invocation_id(
                 ctx: restate.ObjectSharedContext,
             ) -> str | None:
+                task_id = ctx.key()
+                logger.info("Getting invocation id for task %s", task_id)
                 return await ctx.get(INVOCATION_ID) or None
 
             @staticmethod
@@ -151,6 +153,8 @@ class RestateA2AMiddleware(Iterable[restate.Service | restate.VirtualObject]):
             async def get_task(
                 ctx: restate.ObjectSharedContext,
             ) -> dict | None:
+                task_id = ctx.key()
+                logger.info("Getting task %s", task_id)
                 return await ctx.get(TASK, type_hint=dict) or None
 
             @staticmethod
