@@ -1,5 +1,8 @@
+import logging
 import restate
 import json
+
+logger = logging.getLogger(__name__)
 
 from typing import Any, Optional
 from google.adk import Runner
@@ -65,6 +68,12 @@ async def reimburse(
     if amount > 100.0:
         # Human approval
         callback_id, callback_promise = restate_context.awakeable()
+        logger.info(
+            "Awaiting human approval for request %s — to approve run: "
+            "curl -X POST http://localhost:9070/awakeables/%s/resolve "
+            "-H 'content-type: application/json' -d 'true'",
+            request_id, callback_id,
+        )
         await restate_context.run_typed(
             "Request approval", backoffice_submit_request, request_id=request_id, callback_id=callback_id
         )
