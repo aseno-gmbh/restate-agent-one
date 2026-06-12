@@ -1,7 +1,10 @@
 import logging
 import restate
 import json
-
+logging.basicConfig(
+    level=logging.INFO,
+    format="[%(asctime)s] [%(process)d] [%(levelname)s] - %(message)s",
+)
 logger = logging.getLogger(__name__)
 
 from typing import Any, Optional
