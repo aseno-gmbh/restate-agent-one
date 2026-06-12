@@ -1,79 +1,125 @@
-# pylint: disable=C0116
-import json
 import logging
 from collections.abc import Iterable
-from datetime import datetime
-from typing import AsyncIterable
+from datetime import datetime, timezone
+from typing import Any
 
 import restate
-from a2a.types import *
-from pydantic_core._pydantic_core import ValidationError
-from restate.serde import PydanticJsonSerde
+from google.protobuf.json_format import MessageToDict, ParseDict
+from google.protobuf.timestamp_pb2 import Timestamp as PBTimestamp
+from pydantic import BaseModel
+
+from a2a.types import (
+    AgentCard,
+    Artifact,
+    CancelTaskRequest,
+    DeleteTaskPushNotificationConfigRequest,
+    GetExtendedAgentCardRequest,
+    GetTaskPushNotificationConfigRequest,
+    GetTaskRequest,
+    ListTaskPushNotificationConfigsRequest,
+    Message,
+    Part,
+    SendMessageRequest,
+    SubscribeToTaskRequest,
+    Task,
+    TaskPushNotificationConfig,
+    TaskStatus,
+)
+from a2a.types.a2a_pb2 import (
+    ROLE_AGENT,
+    TASK_STATE_CANCELED,
+    TASK_STATE_COMPLETED,
+    TASK_STATE_FAILED,
+    TASK_STATE_INPUT_REQUIRED,
+    TASK_STATE_SUBMITTED,
+)
 
 from .models import A2AAgent
 
 logger = logging.getLogger(__name__)
 
-# K/V stored in Restate
 TASK = "task"
 INVOCATION_ID = "invocation-id"
 
-# Method-to-model mapping for centralized routing
-A2ARequestModel = (
-        SendMessageRequest
-        | SendStreamingMessageRequest
-        | GetTaskRequest
-        | CancelTaskRequest
-        | SetTaskPushNotificationConfigRequest
-        | GetTaskPushNotificationConfigRequest
-        | ListTaskPushNotificationConfigRequest
-        | DeleteTaskPushNotificationConfigRequest
-        | TaskResubscriptionRequest
-        | GetAuthenticatedExtendedCardRequest
-)
-
-METHOD_TO_MODEL: dict[str, type[A2ARequestModel]] = {
-    model.model_fields['method'].default: model
-    for model in A2ARequestModel.__args__
+# v1.0 JSON-RPC method name → protobuf request class
+METHOD_TO_MODEL: dict[str, type] = {
+    "SendMessage": SendMessageRequest,
+    "GetTask": GetTaskRequest,
+    "CancelTask": CancelTaskRequest,
+    "SubscribeToTask": SubscribeToTaskRequest,
+    "CreateTaskPushNotificationConfig": TaskPushNotificationConfig,
+    "GetTaskPushNotificationConfig": GetTaskPushNotificationConfigRequest,
+    "ListTaskPushNotificationConfigs": ListTaskPushNotificationConfigsRequest,
+    "DeleteTaskPushNotificationConfig": DeleteTaskPushNotificationConfigRequest,
+    "GetExtendedAgentCard": GetExtendedAgentCardRequest,
 }
 
 
+class _JSONRPCEnvelope(BaseModel):
+    jsonrpc: str = "2.0"
+    id: Any = None
+    method: str = ""
+    params: dict = {}
+
+
+def _ok(req_id: Any, result: Any) -> dict:
+    return {"jsonrpc": "2.0", "id": req_id, "result": result}
+
+
+def _err(req_id: Any, code: int, message: str) -> dict:
+    return {"jsonrpc": "2.0", "id": req_id, "error": {"code": code, "message": message}}
+
+
+def _now_ts() -> PBTimestamp:
+    ts = PBTimestamp()
+    ts.FromDatetime(datetime.now(timezone.utc))
+    return ts
+
+
+def _dict_to_part(part_dict: dict) -> Part:
+    """Convert agent-returned {"type": "text", "text": "..."} dict to a proto Part."""
+    if part_dict.get("type") == "text" or "text" in part_dict:
+        return Part(text=part_dict.get("text", ""))
+    return ParseDict(part_dict, Part())
+
+
+def _get_user_query(message: Message) -> str:
+    if not message.parts:
+        raise restate.exceptions.TerminalError("Message has no parts")
+    part = message.parts[0]
+    if not part.text:
+        raise restate.exceptions.TerminalError("Only text parts are supported")
+    return part.text
+
+
 class RestateA2AMiddleware(Iterable[restate.Service | restate.VirtualObject]):
-    """Middleware for the agent to handle task processing and state management."""
 
     def __init__(self, agent_card: AgentCard, agent: A2AAgent):
-        self.agent_card = agent_card.model_copy()
+        # Copy the proto message so we don't mutate the caller's object
+        self.agent_card = type(agent_card)()
+        self.agent_card.CopyFrom(agent_card)
         self.agent = agent
         self.a2a_server_name = f"{self.agent_card.name}A2AServer"
         self.task_object_name = f"{self.agent_card.name}TaskObject"
 
-        # replace the base url with the exact url of the process_request handler.
-        restate_base_url = self.agent_card.url
-        process_request_url = (
-            f"{restate_base_url}/{self.a2a_server_name}/process_request"
-        )
-        self.agent_card.url = process_request_url
+        # Point the first interface URL at the Restate process_request handler
+        if self.agent_card.supported_interfaces:
+            base_url = self.agent_card.supported_interfaces[0].url
+            self.agent_card.supported_interfaces[0].url = (
+                f"{base_url}/{self.a2a_server_name}/process_request"
+            )
 
-        self.restate_services = []
+        self.restate_services: list[restate.Service | restate.VirtualObject] = []
         self._build_services()
 
-
     def __iter__(self):
-        """Returns the services that define the agent's a2a server and task object."""
         return iter(self.restate_services)
 
     @property
-    def agent_card_json(self):
-        """Return the agent card"""
-        return self.agent_card.model_dump()
+    def agent_card_json(self) -> dict:
+        return MessageToDict(self.agent_card)
 
-    @property
-    def services(self) -> Iterable[restate.Service | restate.VirtualObject]:
-        """Return the services that define the agent's a2a server and task object."""
-        return self.restate_services
-
-    def _build_services(self):
-        """Creates an A2A server for reimbursement processing with customizable name and description."""
+    def _build_services(self) -> None:
         a2a_service = restate.Service(
             self.a2a_server_name,
             description=self.agent_card.description,
@@ -89,354 +135,252 @@ class RestateA2AMiddleware(Iterable[restate.Service | restate.VirtualObject]):
 
         agent = self.agent
 
+        # ── Inner TaskObject ──────────────────────────────────────────────────
+
         class TaskObject:
-            """TaskObject is a virtual object that handles task processing and state management."""
 
             @staticmethod
             @task_object.handler(kind="shared")
             async def get_invocation_id(
                 ctx: restate.ObjectSharedContext,
             ) -> str | None:
-                task_id = ctx.key()
-                logger.info("Getting invocation id for task %s", task_id)
                 return await ctx.get(INVOCATION_ID) or None
 
             @staticmethod
-            @task_object.handler(output_serde=PydanticJsonSerde(Task), kind="shared")
+            @task_object.handler(kind="shared")
             async def get_task(
                 ctx: restate.ObjectSharedContext,
-            ) -> Task | None:
-                task_id = ctx.key()
-                logger.info("Getting task %s", task_id)
-                return await ctx.get(TASK, type_hint=Task) or None
+            ) -> dict | None:
+                return await ctx.get(TASK, type_hint=dict) or None
 
             @staticmethod
             @task_object.handler()
             async def cancel_task(
-                ctx: restate.ObjectContext, request: CancelTaskRequest
-            ) -> CancelTaskResponse:
-                cancelled_task = await TaskObject.update_store(
-                    ctx, state=TaskState.canceled
-                )
-                success_response = CancelTaskSuccessResponse(
-                    id=request.id, result=cancelled_task
-                )
-                return CancelTaskResponse(root=success_response)
+                ctx: restate.ObjectContext, _: None
+            ) -> dict:
+                return await TaskObject._update_store(ctx, state=TASK_STATE_CANCELED)
 
             @staticmethod
             @task_object.handler()
             async def handle_send_message_request(
-                ctx: restate.ObjectContext, request: SendMessageRequest
-            ) -> SendMessageResponse:
-                logger.info(
-                    "Starting task execution workflow %s for task %s",
-                    request.id,
-                    request.params.message.task_id,
-                )
+                ctx: restate.ObjectContext, request_dict: dict
+            ) -> dict:
+                request = ParseDict(request_dict, SendMessageRequest())
 
-                message_send_params: MessageSendParams = request.params
-                if not message_send_params.message.context_id:
-                    context_id = str(ctx.uuid())
-                    message_send_params.message.context_id = context_id
+                if not request.message.context_id:
+                    request.message.context_id = str(ctx.uuid())
 
-                # Store this invocation ID so it can be cancelled by someone else
-                await TaskObject.set_invocation_id(ctx, ctx.request().id)
-
-                # Persist the request data
-                await TaskObject.upsert_task(ctx, message_send_params)
+                await TaskObject._set_invocation_id(ctx, ctx.request().id)
+                await TaskObject._upsert_task(ctx, request)
 
                 try:
-                    # Forward the request to the agent
                     result = await agent.invoke(
                         ctx,
-                        query=_get_user_query_from_message(message_send_params.message),
-                        session_id=message_send_params.message.context_id,
+                        query=_get_user_query(request.message),
+                        session_id=request.message.context_id,
                     )
+                    parts = [_dict_to_part(p) for p in result.parts]
+
                     if result.require_user_input:
-                        updated_task = await TaskObject.update_store(
-                            ctx,
-                            state=TaskState.input_required,
-                            status_message=Message(message_id=str(ctx.uuid()), role=Role.agent, parts=result.parts),
+                        msg = Message(message_id=str(ctx.uuid()), role=ROLE_AGENT)
+                        msg.parts.extend(parts)
+                        task_dict = await TaskObject._update_store(
+                            ctx, state=TASK_STATE_INPUT_REQUIRED, status_message=msg
                         )
                     else:
-                        updated_task = await TaskObject.update_store(
-                            ctx,
-                            state=TaskState.completed,
-                            artifacts=[Artifact(artifact_id=str(ctx.uuid()), parts=result.parts)],
+                        artifact = Artifact(artifact_id=str(ctx.uuid()))
+                        artifact.parts.extend(parts)
+                        task_dict = await TaskObject._update_store(
+                            ctx, state=TASK_STATE_COMPLETED, artifacts=[artifact]
                         )
-
                     ctx.clear(INVOCATION_ID)
-                    return SendMessageResponse(root=SendMessageSuccessResponse(id=request.id, result=updated_task))
-                except restate.exceptions.TerminalError as e:
-                    if e.status_code == 409 and e.message == "cancelled":
-                        logger.info("Task %s was cancelled", message_send_params.message.task_id)
-                        cancelled_task = await TaskObject.update_store(
-                            ctx, state=TaskState.canceled
-                        )
-                        ctx.clear(INVOCATION_ID)
-                        return SendMessageResponse(root=SendMessageSuccessResponse(id=request.id, result=cancelled_task))
+                    return task_dict
 
-                    logger.error(
-                        "Error while processing task %s: %s - %s",
-                        message_send_params.message.message_id,
-                        e.status_code,
-                        e.message,
-                    )
-                    failed_task = await TaskObject.update_store(ctx, state=TaskState.failed)
+                except restate.exceptions.TerminalError as err:
+                    # Cancellation (409) or other terminal failure — always return, never re-raise,
+                    # so that ctx.attach_invocation in the cancel flow can retrieve this result.
+                    state = TASK_STATE_CANCELED if err.status_code == 409 else TASK_STATE_FAILED
+                    task_dict = await TaskObject._update_store(ctx, state=state)
                     ctx.clear(INVOCATION_ID)
-                    return SendMessageResponse(root=JSONRPCErrorResponse(id=request.id, error=JSONRPCError(code=e.status_code,message=e.message)))
+                    return task_dict
+
+            # ── Private helpers ───────────────────────────────────────────────
 
             @staticmethod
-            async def update_store(
+            async def _update_store(
                 ctx: restate.ObjectContext,
-                state: TaskState | None,
+                state: int,
                 status_message: Message | None = None,
                 artifacts: list[Artifact] | None = None,
-            ) -> Task:
-                """Update task store using A2A SDK types."""
-                task_id = ctx.key()
-                logger.info("Updating status task %s to %s", task_id, state)
+            ) -> dict:
+                task_dict = await ctx.get(TASK, type_hint=dict)
+                if task_dict is None:
+                    raise restate.exceptions.TerminalError("Task not found in store")
 
-                task = await ctx.get(TASK, type_hint=Task)
-                if task is None:
-                    logger.error("Task %s not found for updating", task_id)
-                    raise restate.exceptions.TerminalError(f"Task {task_id} not found")
+                task = ParseDict(task_dict, Task())
 
-                new_task_status = await ctx.run_typed(
+                def _make_status_dict() -> dict:
+                    new_status = TaskStatus(state=state, timestamp=_now_ts())
+                    if status_message is not None:
+                        new_status.message.CopyFrom(status_message)
+                    return MessageToDict(new_status)
+
+                status_dict = await ctx.run_typed(
                     "task status",
-                    lambda task_state=state: TaskStatus(
-                        state=task_state,
-                        timestamp=datetime.now().isoformat(),
-                        message=status_message,
-                    ),
-                    restate.RunOptions(type_hint=TaskStatus),
+                    _make_status_dict,
+                    restate.RunOptions(type_hint=dict),
                 )
-                prev_status = task.status
-                if prev_status.message is not None:
-                    task.history.append(prev_status.message)
-                task.status = new_task_status
+                new_status = ParseDict(status_dict, TaskStatus())
 
-                if artifacts is not None:
-                    if task.artifacts is None:
-                        task.artifacts = []
+                # Move previous status message into history before overwriting
+                if task.status.HasField("message"):
+                    task.history.extend([task.status.message])
+                task.status.CopyFrom(new_status)
+
+                if artifacts:
                     task.artifacts.extend(artifacts)
 
-                ctx.set(TASK, task)
-                return task
+                updated_dict = MessageToDict(task)
+                ctx.set(TASK, updated_dict)
+                return updated_dict
 
             @staticmethod
-            async def set_invocation_id(ctx: restate.ObjectContext, invocation_id: str):
-                """Set invocation ID."""
-                task_id = ctx.key()
-                logger.info("Adding invocation id %s for task %s", invocation_id, task_id)
-                current_invocation_id = await ctx.get(INVOCATION_ID)
-                if current_invocation_id is not None:
+            async def _set_invocation_id(
+                ctx: restate.ObjectContext, invocation_id: str
+            ) -> None:
+                current = await ctx.get(INVOCATION_ID)
+                if current is not None:
                     raise restate.exceptions.TerminalError(
-                        "There is an ongoing invocation. How did we end up here?"
+                        "There is an ongoing invocation."
                     )
                 ctx.set(INVOCATION_ID, invocation_id)
 
             @staticmethod
-            async def upsert_task(
-                ctx: restate.ObjectContext, message_send_params: MessageSendParams
-            ) -> Task:
-                task_id = ctx.key()
-                logger.info("Upserting task %s", task_id)
+            async def _upsert_task(
+                ctx: restate.ObjectContext, request: SendMessageRequest
+            ) -> None:
+                task_dict = await ctx.get(TASK, type_hint=dict)
 
-                task_state = await ctx.get(TASK, type_hint=Task)
-                if task_state is None:
-                    task_state = await ctx.run_typed(
+                if task_dict is None:
+                    def _create_task_dict() -> dict:
+                        task = Task(
+                            id=request.message.message_id,
+                            context_id=request.message.context_id,
+                        )
+                        task.status.CopyFrom(
+                            TaskStatus(state=TASK_STATE_SUBMITTED, timestamp=_now_ts())
+                        )
+                        task.history.extend([request.message])
+                        return MessageToDict(task)
+
+                    task_dict = await ctx.run_typed(
                         "Create task",
-                        lambda: Task(
-                            id=message_send_params.message.message_id,
-                            context_id=message_send_params.message.context_id,
-                            status=TaskStatus(
-                                state=TaskState.submitted,
-                                timestamp=datetime.now().isoformat()
-                            ),
-                            history=[message_send_params.message] if message_send_params.message else [],
-                        ),
-                        restate.RunOptions(type_hint=Task)
+                        _create_task_dict,
+                        restate.RunOptions(type_hint=dict),
                     )
                 else:
-                    task_state.history.append(message_send_params.message)
+                    task = ParseDict(task_dict, Task())
+                    task.history.extend([request.message])
+                    task_dict = MessageToDict(task)
 
-                ctx.set(TASK, task_state)
-                return task_state
+                ctx.set(TASK, task_dict)
+
+        # ── Inner A2aService ──────────────────────────────────────────────────
 
         class A2aService:
 
+            @staticmethod
             @a2a_service.handler()
-            @staticmethod
             async def process_request(
-                ctx: restate.Context, req: JSONRPCRequest
-            ) -> JSONRPCResponse:
-                methods = {
-                    SendMessageRequest: A2aService.on_send_message_request,
-                    SendStreamingMessageRequest: A2aService.on_send_streaming_message_request,
-                    GetTaskRequest: A2aService.on_get_task,
-                    CancelTaskRequest: A2aService.on_cancel_task,
-                    TaskResubscriptionRequest: A2aService.on_resubscribe_to_task,
-                    SetTaskPushNotificationConfigRequest: A2aService.on_set_task_push_notification,
-                    GetTaskPushNotificationConfigRequest: A2aService.on_get_task_push_notification,
-                    ListTaskPushNotificationConfigRequest: A2aService.on_list_task_push_notification,
-                    DeleteTaskPushNotificationConfigRequest: A2aService.on_delete_task_push_notification,
-                    GetAuthenticatedExtendedCardRequest: A2aService.on_get_authenticated_extended_card_request
-                }
-
-                method = req.method
-
-                model_class = METHOD_TO_MODEL.get(method)
+                ctx: restate.Context, req: _JSONRPCEnvelope
+            ) -> dict:
+                model_class = METHOD_TO_MODEL.get(req.method)
                 if not model_class:
-                    return JSONRPCResponse(root=JSONRPCErrorResponse(
-                        id=req.id, error=MethodNotFoundError()
-                    ))
-                try:
-                    json_rpc_request = model_class.model_validate_json(req.model_dump_json())
-                except ValidationError as e:
-                    logger.exception('Failed to validate base JSON-RPC request')
-                    return JSONRPCResponse(root=JSONRPCErrorResponse(
-                        id=req.id, error=InvalidParamsError(data=json.loads(e.json()))
-                    ))
+                    return _err(req.id, -32601, f"Method not found: {req.method}")
 
-                fn = methods.get(type(json_rpc_request), None)
-                if not fn:
-                    return JSONRPCResponse(root=JSONRPCErrorResponse(
-                        id=req.id,
-                        error=MethodNotFoundError(message="Method not found"),
-                    ))
                 try:
-                    return await fn(ctx, json_rpc_request)
-                except restate.exceptions.TerminalError as e:
-                    logger.error("Error processing request: %s", e)
-                    return JSONRPCResponse(root=JSONRPCErrorResponse(
-                        id=req.id,
-                        error=JSONRPCError(code=e.status_code, message=e.message),
-                    ))
+                    specific_request = ParseDict(req.params, model_class())
+                except Exception as exc:
+                    return _err(req.id, -32602, f"Invalid params: {exc}")
+
+                try:
+                    result = await A2aService._dispatch(
+                        ctx, req, specific_request, req.method
+                    )
+                    return _ok(req.id, result)
+                except restate.exceptions.TerminalError as err:
+                    return _err(req.id, err.status_code, err.message)
 
             @staticmethod
-            async def on_send_message_request(
-                ctx: restate.Context, request: SendMessageRequest
-            ) -> SendMessageResponse:
-                task_id = request.params.message.task_id
-                logger.info("Processing send message request with id %s for task id %s", request.id, task_id)
+            async def _dispatch(
+                ctx: restate.Context,
+                req: _JSONRPCEnvelope,
+                specific_request: Any,
+                method: str,
+            ) -> dict | None:
+                match method:
+                    case "SendMessage":
+                        return await A2aService._on_send_message(
+                            ctx, req, specific_request
+                        )
+                    case "GetTask":
+                        return await A2aService._on_get_task(ctx, specific_request)
+                    case "CancelTask":
+                        return await A2aService._on_cancel_task(ctx, specific_request)
+                    case _:
+                        raise restate.exceptions.TerminalError(
+                            f"Method not supported: {method}", status_code=400
+                        )
 
-                if task_id is not None and not (isinstance(task_id, str) and task_id):
-                    raise restate.TerminalError('Task ID must be a non-empty string')
+            @staticmethod
+            async def _on_send_message(
+                ctx: restate.Context,
+                req: _JSONRPCEnvelope,
+                request: SendMessageRequest,
+            ) -> dict:
+                task_id = request.message.task_id or str(ctx.uuid())
                 return await ctx.object_call(
                     TaskObject.handle_send_message_request,
-                    key=task_id or str(ctx.uuid()),
-                    arg=request,
-                    idempotency_key=str(request.id),
+                    key=task_id,
+                    arg=MessageToDict(request),
+                    idempotency_key=str(req.id),
                 )
 
             @staticmethod
-            async def on_send_streaming_message_request(
-                    ctx: restate.Context, request: SendStreamingMessageRequest
-            ) -> SendStreamingMessageResponse:
-                raise restate.exceptions.TerminalError(f"Not implemented: {request.method}")
-
-
-            @staticmethod
-            async def on_get_task(
+            async def _on_get_task(
                 ctx: restate.Context, request: GetTaskRequest
-            ) -> GetTaskResponse:
-                logger.info("Getting task %s", request.params.id)
-                task_query_params: TaskQueryParams = request.params
-
-                task = await ctx.object_call(
-                    TaskObject.get_task, key=task_query_params.id, arg=None
+            ) -> dict:
+                task_dict = await ctx.object_call(
+                    TaskObject.get_task, key=request.id, arg=None
                 )
-                if task is None:
-                    return GetTaskResponse(root=JSONRPCErrorResponse(id=request.id, error=TaskNotFoundError()))
-
-                task_result = task.model_copy()
-                history_length = task_query_params.history_length
-                if history_length is not None and history_length > 0:
-                    task_result.history = task.history[-history_length:]
-                else:
-                    # Default is no history
-                    task_result.history = []
-                return GetTaskResponse(root=GetTaskSuccessResponse(id=request.id, result=task_result))
+                if task_dict is None:
+                    raise restate.exceptions.TerminalError(
+                        "Task not found", status_code=404
+                    )
+                return task_dict
 
             @staticmethod
-            async def on_cancel_task(
+            async def _on_cancel_task(
                 ctx: restate.Context, request: CancelTaskRequest
-            ) -> CancelTaskResponse:
-                logger.info("Cancelling task %s", request.params.id)
-                task_id_params: TaskIdParams = request.params
-
-                task = await ctx.object_call(
-                    TaskObject.get_task, key=task_id_params.id, arg=None
+            ) -> dict:
+                task_dict = await ctx.object_call(
+                    TaskObject.get_task, key=request.id, arg=None
                 )
-                if task is None:
-                    return CancelTaskResponse(root=JSONRPCErrorResponse(id=request.id, error=TaskNotFoundError()))
-                invocation_id = await ctx.object_call(
-                    TaskObject.get_invocation_id, key=task_id_params.id, arg=None
-                )
-                if invocation_id is None:
-                    # Task either doesn't exist or is already completed
-                    return await ctx.object_call(
-                        TaskObject.cancel_task, key=task_id_params.id, arg=request
+                if task_dict is None:
+                    raise restate.exceptions.TerminalError(
+                        "Task not found", status_code=404
                     )
 
-                # Cancel the invocation
-                ctx.cancel_invocation(invocation_id)
-                # Wait for cancellation to complete and for the cancelled task info
-                canceled_task_info = await ctx.attach_invocation(
-                    invocation_id, type_hint=SendMessageResponse
+                invocation_id = await ctx.object_call(
+                    TaskObject.get_invocation_id, key=request.id, arg=None
                 )
-                return CancelTaskResponse(root=CancelTaskSuccessResponse(
-                    id=request.id,
-                    result=canceled_task_info.root.result,
-                ))
+                if invocation_id is None:
+                    # Task is already finished — mark it cancelled in the store
+                    return await ctx.object_call(
+                        TaskObject.cancel_task, key=request.id, arg=None
+                    )
 
-            @staticmethod
-            async def on_set_task_push_notification(
-                ctx: restate.Context, request: SetTaskPushNotificationConfigRequest
-            ) -> SetTaskPushNotificationConfigResponse:
-                return SetTaskPushNotificationConfigResponse(root=JSONRPCErrorResponse(id=request.id, error=PushNotificationNotSupportedError()))
-
-            @staticmethod
-            async def on_get_task_push_notification(
-                ctx: restate.Context, request: GetTaskPushNotificationConfigRequest
-            ) -> GetTaskPushNotificationConfigResponse:
-                return GetTaskPushNotificationConfigResponse(root=JSONRPCErrorResponse(id=request.id, error=PushNotificationNotSupportedError()))
-
-            @staticmethod
-            async def on_list_task_push_notification(
-                ctx: restate.Context, request: ListTaskPushNotificationConfigRequest
-            ) -> ListTaskPushNotificationConfigResponse:
-                return ListTaskPushNotificationConfigResponse(root=JSONRPCErrorResponse(id=request.id, error=PushNotificationNotSupportedError()))
-
-            @staticmethod
-            async def on_delete_task_push_notification(
-                ctx: restate.Context, request: DeleteTaskPushNotificationConfigRequest
-            ) -> DeleteTaskPushNotificationConfigResponse:
-                return DeleteTaskPushNotificationConfigResponse(root=JSONRPCErrorResponse(id=request.id, error=PushNotificationNotSupportedError()))
-
-            @staticmethod
-            async def on_resubscribe_to_task(
-                ctx: restate.Context, request: TaskResubscriptionRequest
-            ) -> AsyncIterable[SendMessageResponse] | JSONRPCResponse:
-                return JSONRPCResponse(root=JSONRPCErrorResponse(id=request.id, error=UnsupportedOperationError()))
-
-            @staticmethod
-            async def on_get_authenticated_extended_card_request(
-                ctx: restate.Context, request: GetAuthenticatedExtendedCardRequest
-            ) -> GetAuthenticatedExtendedCardResponse:
-                return GetAuthenticatedExtendedCardResponse(root=JSONRPCErrorResponse(id=request.id, error=AuthenticatedExtendedCardNotConfiguredError()))
-
-        return a2a_service, task_object
-
-
-def _get_user_query_from_message(message: Message) -> str:
-    """Extract user query from A2A SDK Message."""
-    if not message.parts:
-        raise restate.exceptions.TerminalError("Message has no parts")
-
-    part = message.parts[0]
-
-    if not isinstance(part.root, TextPart):
-        raise restate.exceptions.TerminalError("Only text parts are supported")
-    return part.root.text
+                # Cancel the running invocation; handle_send_message_request catches
+                # the TerminalError internally and returns the cancelled task dict.
+                ctx.cancel_invocation(invocation_id)
+                return await ctx.attach_invocation(invocation_id, type_hint=dict)
