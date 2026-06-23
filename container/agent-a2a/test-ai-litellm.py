@@ -15,7 +15,7 @@ from app.common.litellm_config import make_llm_model
 async def main() -> None:
     model = make_llm_model()
     request = LlmRequest(
-        contents=[types.Content(role="user", parts=[types.Part.from_text("Hello!")])]
+        contents=[types.Content(role="user", parts=[types.Part(text="Hello!")])]
     )
     async for response in model.generate_content_async(request):
         if response.content and response.content.parts:
