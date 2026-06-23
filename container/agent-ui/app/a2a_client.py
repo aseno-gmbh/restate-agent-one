@@ -78,6 +78,18 @@ class ReimbursementA2AClient:
     async def cancel_task(self, task_id: str) -> dict:
         return await self._rpc("CancelTask", {"id": task_id})
 
+    async def resolve_awakeable(self, awakeable_id: str, approved: bool) -> None:
+        """Resolve a human-approval awakeable via the Restate ingress."""
+        restate_host = os.environ.get("RESTATE_HOST", "http://localhost:8080")
+        url = f"{restate_host}/restate/awakeables/{awakeable_id}/resolve"
+        async with httpx.AsyncClient(timeout=httpx.Timeout(10.0)) as client:
+            resp = await client.post(
+                url,
+                content=b"true" if approved else b"false",
+                headers={"content-type": "application/json"},
+            )
+            resp.raise_for_status()
+
     async def wait_for_result(self, task_id: str, max_wait_secs: float = 90.0) -> dict:
         """Poll get_task until terminal state or max_wait_secs is exceeded.
 
