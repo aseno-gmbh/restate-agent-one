@@ -9,7 +9,14 @@ import httpx
 
 logger = logging.getLogger(__name__)
 
-_TERMINAL_STATES = frozenset({"completed", "canceled", "failed", "input-required"})
+_TERMINAL_STATES = frozenset({
+    "TASK_STATE_COMPLETED",
+    "TASK_STATE_CANCELED",
+    "TASK_STATE_FAILED",
+    "TASK_STATE_INPUT_REQUIRED",
+    "TASK_STATE_REJECTED",
+    "TASK_STATE_AUTH_REQUIRED",
+})
 
 # Read timeout generous enough for LLM inference; connect timeout tight.
 _DEFAULT_TIMEOUT = httpx.Timeout(connect=10.0, read=300.0, write=30.0, pool=5.0)
@@ -54,8 +61,8 @@ class ReimbursementA2AClient:
     ) -> dict:
         params = {
             "message": {
-                "role": "user",
-                "parts": [{"kind": "text", "text": text}],
+                "role": "ROLE_USER",
+                "parts": [{"text": text}],
                 "messageId": message_id or str(uuid.uuid4()),
                 "taskId": task_id,
                 "contextId": context_id,

@@ -1,5 +1,6 @@
 """LangGraph agent that routes reimbursement requests to the A2A agent."""
 import logging
+import operator
 import os
 import uuid
 from typing import Annotated, Any
@@ -32,6 +33,7 @@ class AgentState(TypedDict):
     messages: Annotated[list[BaseMessage], add_messages]
     a2a_context_id: str | None   # persists for the lifetime of an A2A conversation
     a2a_task_id: str | None      # persists only while a task is in input-required state
+    a2a_exchanges: Annotated[list[dict], operator.add]  # full log of every A2A call
 
 
 def _make_llm() -> Any:
@@ -47,23 +49,30 @@ def _make_llm() -> Any:
 
 
 def _extract_text(task: dict) -> str:
-    """Pull the most relevant text out of a completed or input-required task dict."""
+    """Pull the most relevant text out of a completed or input-required task dict.
+
+    Task state names are protobuf enum names as produced by MessageToDict
+    (e.g. TASK_STATE_COMPLETED, TASK_STATE_INPUT_REQUIRED).
+    """
     state = task.get("status", {}).get("state", "unknown")
 
-    if state == "input-required":
+    if state == "TASK_STATE_INPUT_REQUIRED":
         msg = task.get("status", {}).get("message", {})
         parts = msg.get("parts", [])
         return parts[0].get("text", "I need more information.") if parts else "I need more information."
 
-    if state == "completed":
+    if state == "TASK_STATE_COMPLETED":
         artifacts = task.get("artifacts", [])
         if artifacts:
             parts = artifacts[0].get("parts", [])
             return parts[0].get("text", "Request completed.") if parts else "Request completed."
         return "Your reimbursement request has been processed."
 
-    if state == "canceled":
+    if state == "TASK_STATE_CANCELED":
         return "The reimbursement request was canceled."
+
+    if state in ("TASK_STATE_REJECTED", "TASK_STATE_AUTH_REQUIRED", "TASK_STATE_FAILED"):
+        return f"The request could not be completed (status: {state})."
 
     return f"The request ended with an unexpected status: {state}."
 
@@ -112,14 +121,24 @@ def build_graph() -> Any:
         response_text = _extract_text(task)
 
         # Keep task_id alive only while the task is still waiting for user input.
-        next_task_id = task_id if task_state == "input-required" else None
+        next_task_id = task_id if task_state == "TASK_STATE_INPUT_REQUIRED" else None
 
         logger.info("A2A task %s finished with state: %s", task_id[:8], task_state)
+
+        exchange = {
+            "query": query,
+            "context_id": context_id,
+            "task_id": task_id,
+            "task_state": task_state,
+            "response_text": response_text,
+            "task_raw": task,
+        }
 
         return {
             "messages": [ToolMessage(content=response_text, tool_call_id=tool_call["id"])],
             "a2a_context_id": context_id,
             "a2a_task_id": next_task_id,
+            "a2a_exchanges": [exchange],
         }
 
     # ── Routing ──────────────────────────────────────────────────────────────
