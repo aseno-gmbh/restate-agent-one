@@ -143,6 +143,14 @@ async def _generate_content_async(ctx: restate.Context, max_attempts: int, model
             result = await anext(a_gen)
             _generate_client_function_call_id(result)
             return result
+        except Exception as exc:
+            # Rate-limit / cooldown errors should not be retried immediately —
+            # doing so prolongs the LiteLLM deployment cooldown and creates a
+            # feedback loop. Raise as TerminalError so Restate stops retrying
+            # this run_typed attempt and surfaces the error to the caller.
+            if "RateLimitError" in type(exc).__name__ or "429" in str(exc):
+                raise restate.TerminalError(str(exc), status_code=429) from exc
+            raise
         finally:
             await a_gen.aclose()
 
