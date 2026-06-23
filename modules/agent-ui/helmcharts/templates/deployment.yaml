@@ -1,0 +1,43 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: restate-agent-ui
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app: restate-agent-ui
+spec:
+  selector:
+    matchLabels:
+      app: restate-agent-ui
+      tier: restate-agent-ui
+  replicas: 1
+  template:
+    metadata:
+      labels:
+        app: restate-agent-ui
+        tier: restate-agent-ui
+    spec:
+      containers:
+      - name: restate-agent-ui
+        image: {{ .Values.global.imageRegistry }}/{{ .Values.deployment.image }}
+        imagePullPolicy: Always
+        resources:
+          limits:
+            cpu: {{ .Values.deployment.resources.cpuLimit }}
+            memory: {{ .Values.deployment.resources.memoryLimit }}
+          requests:
+            cpu: {{ .Values.deployment.resources.cpuRequest }}
+            memory: {{ .Values.deployment.resources.memoryRequest }}
+        ports:
+        - containerPort: {{ .Values.deployment.containerPort }}
+        env:
+        - name: LLM_API_BASE
+          value: {{ .Values.llm.apiBase }}
+        - name: LLM_API_KEY
+          value: {{ .Values.llm.apiKey }}
+        - name: LLM_MODEL_NAME
+          value: {{ .Values.llm.modelName }}
+        - name: RESTATE_HOST
+          value: {{ .Values.restate.host }}
+        - name: UI_PORT
+          value: {{ .Values.app.uiPort | quote }}

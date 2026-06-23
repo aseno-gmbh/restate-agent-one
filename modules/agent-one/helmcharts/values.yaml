@@ -1,0 +1,37 @@
+global:
+  imageRegistry: docker.io 
+  maintainer: admin@aseno.eu
+deployment:
+  image: aseno/restate-agent-one:1.0.1 #  
+  containerPort: 9080
+  resources:
+    cpuRequest: 100m
+    memoryRequest: 200Mi
+    cpuLimit: 500m
+    memoryLimit: 1Gi
+service:
+  port: 9080
+llm:
+  apiBase: https://ai.cloud-doctor.eu # azure, aws, local
+  apiKey: "sk-nyR3TMq7uzO-gCwHyQR0sw"
+  modelName: "litellm_proxy/aseno-gemini-model"
+ui:
+  publicURL: _SET_VALUE_HERE_
+  azureInferenceEndpoint:  _SET_VALUE_HERE_
+  azureInferenceCredential:  _SET_VALUE_HERE_
+  awsAccessKeyId:  _SET_VALUE_HERE_
+  awsSecretAccessKey:  _SET_VALUE_HERE_
+  langsmithEndpoint:  _SET_VALUE_HERE_
+  langsmithApiKey:  _SET_VALUE_HERE_
+  langsmithProject:  _SET_VALUE_HERE_
+  pineconeApiKey:  _SET_VALUE_HERE_
+agent:
+  model_id: "openai.gpt-oss-120b-1:0"
+  region: "us-east-1"
+mcp:
+  url: "http://hapi.cloud-doctor.eu/mcp/messages"
+  transport: "streamable_http"
+app:
+  fullDomain: ai.cloud-doctor.eu
+  clusterissuer: cluster-issuer-stage # cluster-issuer-global
+  createCert: false

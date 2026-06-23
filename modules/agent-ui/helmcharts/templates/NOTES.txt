@@ -1,0 +1,8 @@
+Restate Agent UI deployed.
+
+Access the Streamlit chat UI:
+  kubectl port-forward svc/restate-agent-ui 8501:8501 -n {{ .Release.Namespace }}
+  open http://localhost:8501
+
+The UI agent routes reimbursement requests to:
+  {{ .Values.restate.host }}/ReimbursementAgentA2AServer/process_request

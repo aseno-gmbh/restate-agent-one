@@ -1,0 +1,26 @@
+global:
+  imageRegistry: docker.io
+  maintainer: admin@aseno.eu
+
+deployment:
+  image: aseno/restate-agent-ui:latest
+  containerPort: 8501
+  resources:
+    cpuRequest: 100m
+    memoryRequest: 256Mi
+    cpuLimit: 500m
+    memoryLimit: 1Gi
+
+service:
+  port: 8501
+
+llm:
+  apiBase: https://xxxx.eu        # same LiteLLM proxy as the other agents
+  apiKey: "sk-XXXX"
+  modelName: "litellm_proxy/xxx-gemini-model"
+
+restate:
+  host: "http://restate:8080"     # in-cluster Restate service — same namespace
+
+app:
+  uiPort: "8501"

@@ -65,7 +65,12 @@ class RestatePlugin(BasePlugin):
 
     async def before_model_callback(self, *, callback_context: CallbackContext, llm_request: LlmRequest) -> Optional[
         LlmResponse]:
-        model = self._models[callback_context.invocation_id]
+        model = self._models.get(callback_context.invocation_id)
+        if model is None:
+            raise restate.TerminalError(
+                f"No model registered for invocation {callback_context.invocation_id}. "
+                "before_agent_callback may not have completed successfully."
+            )
         ctx = current_restate_context()
         response = await _generate_content_async(ctx, self._max_model_call_retries, model, llm_request)
         return response
@@ -78,7 +83,12 @@ class RestatePlugin(BasePlugin):
             tool_context: ToolContext,
     ) -> Optional[dict]:
         tool_context.session.state["restate_context"] = current_restate_context()
-        lock = self._locks[tool_context.invocation_id]
+        lock = self._locks.get(tool_context.invocation_id)
+        if lock is None:
+            raise restate.TerminalError(
+                f"No lock registered for invocation {tool_context.invocation_id}. "
+                "before_agent_callback may not have completed successfully."
+            )
         await lock.acquire()
         # TODO: if we want we can also automatically wrap tools with ctx.run_typed here
         return None
@@ -91,15 +101,17 @@ class RestatePlugin(BasePlugin):
             tool_context: ToolContext,
             result: dict,
     ) -> Optional[dict]:
-        lock = self._locks[tool_context.invocation_id]
-        lock.release()
+        lock = self._locks.get(tool_context.invocation_id)
+        if lock is not None:
+            lock.release()
         tool_context.session.state.pop("restate_context", None)
         return None
 
     async def on_tool_error_callback(self, *, tool: BaseTool, tool_args: dict[str, Any], tool_context: ToolContext,
                                      error: Exception) -> Optional[dict]:
-        lock = self._locks[tool_context.invocation_id]
-        lock.release()
+        lock = self._locks.get(tool_context.invocation_id)
+        if lock is not None:
+            lock.release()
         tool_context.session.state.pop("restate_context", None)
         return None
 

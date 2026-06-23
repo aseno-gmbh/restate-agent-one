@@ -1,0 +1,6 @@
+apiVersion: v2
+name: agent-ui
+description: Helm chart for the LangGraph reimbursement UI agent
+type: application
+version: 0.0.1
+appVersion: "0.0.1"

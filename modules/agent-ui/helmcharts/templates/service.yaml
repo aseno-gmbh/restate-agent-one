@@ -1,0 +1,14 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: restate-agent-ui
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app: restate-agent-ui
+spec:
+  selector:
+    app: restate-agent-ui
+  ports:
+  - name: http
+    port: {{ .Values.service.port }}
+    targetPort: {{ .Values.deployment.containerPort }}

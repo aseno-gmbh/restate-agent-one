@@ -387,4 +387,12 @@ class RestateA2AMiddleware(Iterable[restate.Service | restate.VirtualObject]):
                 # Cancel the running invocation; handle_send_message_request catches
                 # the TerminalError internally and returns the cancelled task dict.
                 ctx.cancel_invocation(invocation_id)
-                return await ctx.attach_invocation(invocation_id, type_hint=dict)
+                try:
+                    return await ctx.attach_invocation(invocation_id, type_hint=dict)
+                except restate.exceptions.TerminalError:
+                    # The invocation completed between our ID read and the attach
+                    # (TOCTOU); its result is no longer available. Fall back to
+                    # marking the task cancelled in the store.
+                    return await ctx.object_call(
+                        TaskObject.cancel_task, key=request.id, arg=None
+                    )

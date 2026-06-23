@@ -58,7 +58,7 @@ class RestateSessionService(BaseSessionService):
         # Get all state keys and filter for session keys
         keys = await self.ctx().state_keys()
         for key in keys:
-            if key.startswith(f"session:"):
+            if key == "session":
                 session_data = await self.ctx().get(key, type_hint=Session)
                 if session_data:
                     sessions.append(session_data)

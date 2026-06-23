@@ -1,5 +1,5 @@
 import calendar
-from datetime import timedelta, datetime
+from datetime import timedelta, datetime, timezone
 
 import restate
 from pydantic import BaseModel
@@ -36,9 +36,9 @@ def backoffice_email_employee(request_id: str, approved: bool) -> None:
 
 
 def end_of_month(time_now: float) -> timedelta:
-    now = datetime.fromtimestamp(time_now)
+    now = datetime.fromtimestamp(time_now, tz=timezone.utc)
     last_day = calendar.monthrange(now.year, now.month)[1]
-    end_of_month_datetime = datetime(now.year, now.month, last_day, 23, 59, 59, 999999)
+    end_of_month_datetime = datetime(now.year, now.month, last_day, 23, 59, 59, 999999, tzinfo=timezone.utc)
 
     time_remaining = end_of_month_datetime - now
     return timedelta(seconds=time_remaining.total_seconds())
