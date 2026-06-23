@@ -1,16 +1,26 @@
-"""Quick smoke-test: call the LLM using the same env vars as production."""
+"""Quick smoke-test: call the LLM via the same LiteLlm wrapper used in production."""
+import asyncio
 import os
 
-import litellm
 from dotenv import load_dotenv
 
 load_dotenv()
 
-response = litellm.completion(
-    model=os.environ["LLM_MODEL_NAME"],
-    messages=[{"role": "user", "content": "Hello!"}],
-    api_base=os.environ["LLM_API_BASE"],
-    api_key=os.environ["LLM_API_KEY"],
-)
+from google.adk.models.llm_request import LlmRequest
+from google.genai import types
 
-print(response.choices[0].message.content)
+from app.common.litellm_config import make_llm_model
+
+
+async def main() -> None:
+    model = make_llm_model()
+    request = LlmRequest(
+        contents=[types.Content(role="user", parts=[types.Part.from_text("Hello!")])]
+    )
+    async for response in model.generate_content_async(request):
+        if response.content and response.content.parts:
+            print(response.content.parts[0].text)
+            break
+
+
+asyncio.run(main())
