@@ -3,6 +3,7 @@ import logging
 import operator
 import os
 import uuid
+from datetime import datetime, timezone
 from typing import Annotated, Any
 
 from langchain_openai import ChatOpenAI
@@ -26,13 +27,17 @@ call the `submit_reimbursement` tool with their message verbatim.
 When the reimbursement agent asks for missing information (you will see "MISSING_INFO:" in
 the tool response), relay the question naturally to the user — do not expose the raw prefix.
 
+When the tool response starts with "APPROVAL_PENDING:", tell the user that their request has
+been submitted and is now waiting for a manager to approve it. Let them know they will be
+notified once a decision is made. Do not expose the raw prefix or technical details.
+
 For general questions unrelated to reimbursement, answer directly without using any tools."""
 
 
 class AgentState(TypedDict):
     messages: Annotated[list[BaseMessage], add_messages]
     a2a_context_id: str | None   # persists for the lifetime of an A2A conversation
-    a2a_task_id: str | None      # persists only while a task is in input-required state
+    a2a_task_id: str | None      # persists only while a task needs further interaction
     a2a_exchanges: Annotated[list[dict], operator.add]  # full log of every A2A call
 
 
@@ -49,7 +54,7 @@ def _make_llm() -> Any:
 
 
 def _extract_text(task: dict) -> str:
-    """Pull the most relevant text out of a completed or input-required task dict.
+    """Pull the most relevant text out of the task dict.
 
     Task state names are protobuf enum names as produced by MessageToDict
     (e.g. TASK_STATE_COMPLETED, TASK_STATE_INPUT_REQUIRED).
@@ -73,6 +78,14 @@ def _extract_text(task: dict) -> str:
 
     if state in ("TASK_STATE_REJECTED", "TASK_STATE_AUTH_REQUIRED", "TASK_STATE_FAILED"):
         return f"The request could not be completed (status: {state})."
+
+    if state in ("TASK_STATE_WORKING", "TASK_STATE_SUBMITTED"):
+        task_id = task.get("id", "unknown")
+        return (
+            f"APPROVAL_PENDING: The reimbursement request is awaiting manual approval "
+            f"(task {task_id}). The request has been submitted and is on hold until a "
+            f"manager approves it via the Restate system."
+        )
 
     return f"The request ended with an unexpected status: {state}."
 
@@ -106,8 +119,8 @@ def build_graph() -> Any:
 
         # Maintain A2A conversation context across LangGraph turns.
         context_id: str = state.get("a2a_context_id") or str(uuid.uuid4())
-        # Reuse the same task_id when the previous turn left the task in
-        # input-required state; otherwise start a fresh task.
+        # Reuse task_id when the previous turn left the task in input-required
+        # or approval-pending state; otherwise start a fresh task.
         task_id: str = state.get("a2a_task_id") or str(uuid.uuid4())
 
         logger.info(
@@ -119,9 +132,14 @@ def build_graph() -> Any:
 
         task_state = task.get("status", {}).get("state", "unknown")
         response_text = _extract_text(task)
+        approval_pending = task_state in ("TASK_STATE_WORKING", "TASK_STATE_SUBMITTED")
 
-        # Keep task_id alive only while the task is still waiting for user input.
-        next_task_id = task_id if task_state == "TASK_STATE_INPUT_REQUIRED" else None
+        # Keep task_id alive while the task still needs further interaction.
+        next_task_id = (
+            task_id
+            if task_state in ("TASK_STATE_INPUT_REQUIRED", "TASK_STATE_WORKING", "TASK_STATE_SUBMITTED")
+            else None
+        )
 
         logger.info("A2A task %s finished with state: %s", task_id[:8], task_state)
 
@@ -131,7 +149,9 @@ def build_graph() -> Any:
             "task_id": task_id,
             "task_state": task_state,
             "response_text": response_text,
+            "approval_pending": approval_pending,
             "task_raw": task,
+            "timestamp": datetime.now(timezone.utc).isoformat(),
         }
 
         return {

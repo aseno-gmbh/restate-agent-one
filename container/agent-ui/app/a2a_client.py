@@ -18,8 +18,9 @@ _TERMINAL_STATES = frozenset({
     "TASK_STATE_AUTH_REQUIRED",
 })
 
-# Read timeout generous enough for LLM inference; connect timeout tight.
-_DEFAULT_TIMEOUT = httpx.Timeout(connect=10.0, read=300.0, write=30.0, pool=5.0)
+# 60 s read — long enough for LLM inference, short enough to detect a
+# suspended awakeable quickly and fall through to the polling path.
+_DEFAULT_TIMEOUT = httpx.Timeout(connect=10.0, read=60.0, write=30.0, pool=5.0)
 
 
 def get_endpoint_url() -> str:
@@ -77,13 +78,28 @@ class ReimbursementA2AClient:
     async def cancel_task(self, task_id: str) -> dict:
         return await self._rpc("CancelTask", {"id": task_id})
 
-    async def wait_for_result(self, task_id: str) -> dict:
-        """Poll get_task until the task reaches a terminal state."""
+    async def wait_for_result(self, task_id: str, max_wait_secs: float = 90.0) -> dict:
+        """Poll get_task until terminal state or max_wait_secs is exceeded.
+
+        Returns the task dict in whatever state it is when the deadline fires —
+        the caller is responsible for handling non-terminal states (e.g. when
+        the task is blocked on a human-approval awakeable).
+        """
+        import time
+        deadline = time.monotonic() + max_wait_secs
+        task: dict = {}
         while True:
             task = await self.get_task(task_id)
             state = task.get("status", {}).get("state", "")
             logger.info("Polling task %s — state: %s", task_id, state)
             if state in _TERMINAL_STATES:
+                return task
+            if time.monotonic() >= deadline:
+                logger.warning(
+                    "Polling deadline exceeded for task %s — last state: %s "
+                    "(task is likely awaiting external approval)",
+                    task_id, state,
+                )
                 return task
             await asyncio.sleep(self._poll_interval)
 

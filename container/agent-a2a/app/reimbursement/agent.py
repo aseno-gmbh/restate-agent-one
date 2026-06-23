@@ -71,7 +71,7 @@ async def reimburse(
         callback_id, callback_promise = restate_context.awakeable()
         logger.info(
             "Awaiting human approval for request %s — to approve run: "
-            "curl -X POST http://localhost:9070/awakeables/%s/resolve "
+            "curl -X POST http://localhost:8080/restate/awakeables/%s/resolve "
             "-H 'content-type: application/json' -d 'true'",
             request_id, callback_id,
         )
