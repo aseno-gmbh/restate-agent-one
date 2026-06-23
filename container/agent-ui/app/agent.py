@@ -4,7 +4,7 @@ import os
 import uuid
 from typing import Annotated, Any
 
-from langchain_community.chat_models import ChatLiteLLM
+from langchain_openai import ChatOpenAI
 from langchain_core.messages import BaseMessage, SystemMessage, ToolMessage
 from langchain_core.tools import tool
 from langgraph.checkpoint.memory import MemorySaver
@@ -35,10 +35,14 @@ class AgentState(TypedDict):
 
 
 def _make_llm() -> Any:
-    return ChatLiteLLM(
-        model=os.environ["LLM_MODEL_NAME"],
-        api_base=os.environ["LLM_API_BASE"],
-        api_key=os.environ["LLM_API_KEY"],
+    model = os.environ["LLM_MODEL_NAME"]
+    # The LiteLLM proxy speaks the OpenAI protocol; strip the SDK-only prefix.
+    if model.startswith("litellm_proxy/"):
+        model = model[len("litellm_proxy/"):]
+    return ChatOpenAI(
+        model=model,
+        openai_api_base=os.environ["LLM_API_BASE"],
+        openai_api_key=os.environ["LLM_API_KEY"],
     )
 
 
