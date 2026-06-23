@@ -188,47 +188,48 @@ def _render_sidebar() -> None:
                         asyncio.run(_cancel_current_task(task_id))
                     st.toast("Task cancelled.", icon="🛑")
                     st.rerun()
+        else:
+            approval_pending = False
 
-            # ── Approval panel ────────────────────────────────────────────────
-            st.divider()
-            st.subheader("🔐 Approval")
+        # ── Approval panel (always visible) ───────────────────────────────────
+        st.divider()
+        st.subheader("🔐 Approval")
 
-            if approval_pending:
-                st.warning("Waiting for manual approval", icon="⏳")
-                st.caption(
-                    "Copy the awakeable ID from the agent-a2a logs "
-                    "(search for *'Awaiting human approval'*) and paste it below."
-                )
-                awakeable_id = st.text_input(
-                    "Awakeable ID",
-                    placeholder="sign_...",
-                    key="awakeable_id_input",
-                )
-                col_ok, col_no = st.columns(2)
-                with col_ok:
-                    if st.button("✅ Approve", type="primary", use_container_width=True,
-                                 disabled=not awakeable_id):
-                        with st.spinner("Approving…"):
-                            try:
-                                asyncio.run(
-                                    ReimbursementA2AClient().resolve_awakeable(awakeable_id, True)
-                                )
-                                st.success("Approved!", icon="✅")
-                            except Exception as exc:
-                                st.error(f"Error: {exc}", icon="🚨")
-                with col_no:
-                    if st.button("❌ Reject", type="secondary", use_container_width=True,
-                                 disabled=not awakeable_id):
-                        with st.spinner("Rejecting…"):
-                            try:
-                                asyncio.run(
-                                    ReimbursementA2AClient().resolve_awakeable(awakeable_id, False)
-                                )
-                                st.warning("Rejected.", icon="❌")
-                            except Exception as exc:
-                                st.error(f"Error: {exc}", icon="🚨")
-            else:
-                st.success("No pending approvals.", icon="✅")
+        if approval_pending:
+            st.warning("Waiting for manual approval", icon="⏳")
+
+        st.caption(
+            "Paste the awakeable ID from the agent-a2a logs "
+            "(search for *'Awaiting human approval'*)."
+        )
+        awakeable_id = st.text_input(
+            "Awakeable ID",
+            placeholder="sign_...",
+            key="awakeable_id_input",
+        )
+        col_ok, col_no = st.columns(2)
+        with col_ok:
+            if st.button("✅ Approve", type="primary", use_container_width=True,
+                         disabled=not awakeable_id):
+                with st.spinner("Approving…"):
+                    try:
+                        asyncio.run(
+                            ReimbursementA2AClient().resolve_awakeable(awakeable_id, True)
+                        )
+                        st.success("Approved!", icon="✅")
+                    except Exception as exc:
+                        st.error(f"Error: {exc}", icon="🚨")
+        with col_no:
+            if st.button("❌ Reject", type="secondary", use_container_width=True,
+                         disabled=not awakeable_id):
+                with st.spinner("Rejecting…"):
+                    try:
+                        asyncio.run(
+                            ReimbursementA2AClient().resolve_awakeable(awakeable_id, False)
+                        )
+                        st.warning("Rejected.", icon="❌")
+                    except Exception as exc:
+                        st.error(f"Error: {exc}", icon="🚨")
 
         st.divider()
         st.caption("Reimbursement Agent")
