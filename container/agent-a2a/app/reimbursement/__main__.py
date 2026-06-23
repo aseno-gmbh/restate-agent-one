@@ -4,8 +4,15 @@
 import logging
 import os
 
-import restate
 from dotenv import load_dotenv
+
+# load_dotenv() must run before any app imports so that os.environ is populated
+# when litellm_config.py reads LLM_API_BASE / LLM_API_KEY / LLM_MODEL_NAME at
+# module level. In Kubernetes the container env is already set, but local runs
+# with a .env file depend on this ordering.
+load_dotenv()
+
+import restate
 from fastapi import FastAPI
 from google.protobuf.json_format import MessageToDict
 
@@ -14,8 +21,6 @@ from a2a.types import AgentCard, AgentCapabilities, AgentInterface, AgentSkill
 from app.reimbursement.agent import ReimbursementAgent, reimbursement_service
 from app.reimbursement.utils import payment_service
 from app.common.a2a.a2a_middleware import RestateA2AMiddleware
-
-load_dotenv()
 
 logging.basicConfig(
     level=logging.INFO,

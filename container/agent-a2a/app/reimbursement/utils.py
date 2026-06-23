@@ -26,7 +26,8 @@ def backoffice_submit_request(request_id: str, callback_id: str) -> None:
         "=" * 50,
         f"\n Requesting approval for {request_id} \n",
         f"Resolve via: \n"
-        f"curl localhost:8080/restate/awakeables/{callback_id}/resolve --json '{{\"approved\": true}}' \n",
+        f"curl -X POST http://localhost:8080/restate/awakeables/{callback_id}/resolve "
+        f"-H 'content-type: application/json' -d 'true'\n",
         "=" * 50,
     )
 
