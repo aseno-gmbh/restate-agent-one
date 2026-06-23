@@ -172,6 +172,7 @@ def _render_sidebar() -> None:
             ctx_id = a2a.get("a2a_context_id")
             task_id = a2a.get("a2a_task_id")
             exchanges = a2a.get("a2a_exchanges", [])
+            approval_pending = bool(exchanges and exchanges[-1].get("approval_pending"))
 
             if ctx_id:
                 st.divider()
@@ -182,16 +183,52 @@ def _render_sidebar() -> None:
             if task_id:
                 st.caption("Active task")
                 st.code(task_id, language=None)
-                if exchanges and exchanges[-1].get("approval_pending"):
-                    st.warning("Waiting for manual approval", icon="⏳")
-                    st.caption(
-                        "Resolve the awakeable via Restate ingress (port 8080) to unblock."
-                    )
-                if st.button("Cancel task", use_container_width=True, type="primary"):
+                if st.button("Cancel task", use_container_width=True, type="secondary"):
                     with st.spinner("Cancelling…"):
                         asyncio.run(_cancel_current_task(task_id))
                     st.toast("Task cancelled.", icon="🛑")
                     st.rerun()
+
+            # ── Approval panel ────────────────────────────────────────────────
+            st.divider()
+            st.subheader("🔐 Approval")
+
+            if approval_pending:
+                st.warning("Waiting for manual approval", icon="⏳")
+                st.caption(
+                    "Copy the awakeable ID from the agent-a2a logs "
+                    "(search for *'Awaiting human approval'*) and paste it below."
+                )
+                awakeable_id = st.text_input(
+                    "Awakeable ID",
+                    placeholder="sign_...",
+                    key="awakeable_id_input",
+                )
+                col_ok, col_no = st.columns(2)
+                with col_ok:
+                    if st.button("✅ Approve", type="primary", use_container_width=True,
+                                 disabled=not awakeable_id):
+                        with st.spinner("Approving…"):
+                            try:
+                                asyncio.run(
+                                    ReimbursementA2AClient().resolve_awakeable(awakeable_id, True)
+                                )
+                                st.success("Approved!", icon="✅")
+                            except Exception as exc:
+                                st.error(f"Error: {exc}", icon="🚨")
+                with col_no:
+                    if st.button("❌ Reject", type="secondary", use_container_width=True,
+                                 disabled=not awakeable_id):
+                        with st.spinner("Rejecting…"):
+                            try:
+                                asyncio.run(
+                                    ReimbursementA2AClient().resolve_awakeable(awakeable_id, False)
+                                )
+                                st.warning("Rejected.", icon="❌")
+                            except Exception as exc:
+                                st.error(f"Error: {exc}", icon="🚨")
+            else:
+                st.success("No pending approvals.", icon="✅")
 
         st.divider()
         st.caption("Reimbursement Agent")
@@ -215,7 +252,7 @@ def main() -> None:
     st.title("💸 Reimbursement Assistant")
     st.caption("Ask me to process expense reimbursements. Powered by LangGraph + Restate A2A.")
 
-    chat_tab, approval_tab, log_tab = st.tabs(["💬 Chat", "🔐 Approval", "🔗 A2A Log"])
+    chat_tab, log_tab = st.tabs(["💬 Chat", "🔗 A2A Log"])
 
     # ── Chat tab ─────────────────────────────────────────────────────────────
     with chat_tab:
@@ -236,63 +273,6 @@ def main() -> None:
                 st.markdown(entry["content"])
                 if entry.get("a2a_exchange"):
                     _render_a2a_exchange_inline(entry["a2a_exchange"])
-
-    # ── Approval tab ─────────────────────────────────────────────────────────
-    with approval_tab:
-        st.subheader("Human-in-the-Loop Approval")
-
-        a2a_approval = _current_a2a_state()
-        pending_exchange = None
-        if a2a_approval:
-            exchanges = a2a_approval.get("a2a_exchanges", [])
-            if exchanges and exchanges[-1].get("approval_pending"):
-                pending_exchange = exchanges[-1]
-
-        if pending_exchange:
-            task_id = pending_exchange.get("task_id", "")
-            st.info(
-                f"Task **`{task_id}`** is awaiting manual approval.\n\n"
-                "Copy the **awakeable ID** from the agent logs "
-                "(search for *'Awaiting human approval'*) and paste it below.",
-                icon="⏳",
-            )
-
-            awakeable_id = st.text_input(
-                "Awakeable ID",
-                placeholder="sign_...",
-                help="Found in agent-a2a logs: 'curl ... /restate/awakeables/<ID>/resolve'",
-                key="awakeable_id_input",
-            )
-
-            col_approve, col_reject = st.columns(2)
-            with col_approve:
-                approve_clicked = st.button(
-                    "✅ Approve", type="primary", use_container_width=True,
-                    disabled=not awakeable_id,
-                )
-            with col_reject:
-                reject_clicked = st.button(
-                    "❌ Reject", type="secondary", use_container_width=True,
-                    disabled=not awakeable_id,
-                )
-
-            if approve_clicked and awakeable_id:
-                with st.spinner("Sending approval…"):
-                    try:
-                        asyncio.run(ReimbursementA2AClient().resolve_awakeable(awakeable_id, True))
-                        st.success("Approval sent — the reimbursement workflow will continue.", icon="✅")
-                    except Exception as exc:
-                        st.error(f"Failed to resolve awakeable: {exc}", icon="🚨")
-
-            if reject_clicked and awakeable_id:
-                with st.spinner("Sending rejection…"):
-                    try:
-                        asyncio.run(ReimbursementA2AClient().resolve_awakeable(awakeable_id, False))
-                        st.warning("Rejection sent — the request will be denied.", icon="❌")
-                    except Exception as exc:
-                        st.error(f"Failed to resolve awakeable: {exc}", icon="🚨")
-        else:
-            st.success("No pending approvals at the moment.", icon="✅")
 
     # ── A2A Log tab ──────────────────────────────────────────────────────────
     with log_tab:
